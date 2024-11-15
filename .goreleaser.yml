@@ -1,9 +1,9 @@
 version: 2
 
-project_name: cert-cli
+project_name: url-harvester
 
 builds:
-  - id: cert-cli
+  - id: url-harvester
     main: ./cmd/main.go
     goos:
       - linux
@@ -13,7 +13,7 @@ builds:
       - amd64
       - 386
       - arm64
-    binary: cert-cli
+    binary: url-harvester
 
 archives:
   - format: tar.gz
