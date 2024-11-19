@@ -6,10 +6,12 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 
+	"github.com/mihneamanolache/url-harvester/internal/constants"
 	"github.com/mihneamanolache/url-harvester/internal/types"
 	"github.com/playwright-community/playwright-go"
 	"github.com/xitongsys/parquet-go-source/local"
@@ -17,12 +19,74 @@ import (
 )
 
 var (
+    pageType        *bool
 	maxDepth        *int
 	inboundCount    int
 	outboundCount   int
 )
 
 var mu sync.Mutex
+
+func getLanguageFromTLD(tld string) string {
+	if lang, found := constants.TldToLanguage[tld]; found {
+		return lang
+	}
+	return "en" 
+}
+
+func testURL(url string, pageType string, lang string) (bool, error) {
+	pageTypePatterns, exists := constants.PageCategoryKeywords[pageType]
+	if !exists {
+		return false, fmt.Errorf("invalid page type: %s", pageType)
+	}
+
+	patterns, exists := pageTypePatterns[lang]
+	if !exists {
+		return false, fmt.Errorf("no patterns found for language: %s", lang)
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		normalizedURL := strings.Trim(strings.ToLower(url), "/")
+		if re.MatchString(normalizedURL) {
+			return true, nil 
+		}
+	}
+
+	return false, nil // No match found
+}
+
+func determinePageCategory(url string) (string, string, error) {
+	parts := strings.Split(url, ".")
+	tld := parts[len(parts)-1] 
+	lang := getLanguageFromTLD(tld)
+	bestMatchCategory := "unknown"
+	for pageType := range constants.PageCategoryKeywords {
+		validEn, err := testURL(url, pageType, "en")
+		if err != nil {
+			return "", "", err
+		}
+		if validEn {
+			bestMatchCategory = pageType
+			break 
+		}
+
+		validLang, err := testURL(url, pageType, lang)
+		if err != nil {
+			return "", "", err
+		}
+		if validLang {
+			bestMatchCategory = pageType
+			break 
+		}
+	}
+
+	if bestMatchCategory == "" {
+		return "", "", fmt.Errorf("no matching category found for URL: %s", url)
+	}
+
+	return bestMatchCategory, lang, nil
+}
 
 func isCrawled(crawled map[string]bool, host, path string) bool {
 	key := host + path
@@ -124,6 +188,16 @@ func crawlPage(baseURL string, depth int, crawled map[string]bool, parsedURL *ur
 
 		title, _ := entry.InnerText()
 
+        var pageCategory string
+		if *pageType {
+			pageCategory, _, err = determinePageCategory(relURL.String())
+			if err != nil {
+				log.Printf("Error determining page category for %s: %v", href, err)
+			}
+		} else {
+			pageCategory = "unknown"
+		}
+
 		linkInfo := types.LinkInfo{
 			Protocol:  relURL.Scheme,
 			Host:      relURL.Host,
@@ -132,6 +206,7 @@ func crawlPage(baseURL string, depth int, crawled map[string]bool, parsedURL *ur
 			Title:     title,
 			IsInbound: isInbound,
 			Depth:     depth + 1,
+            PageType:  pageCategory,
 		}
 
 		linkInfos = append(linkInfos, linkInfo)
@@ -140,9 +215,19 @@ func crawlPage(baseURL string, depth int, crawled map[string]bool, parsedURL *ur
 		}
 	}
 
-	crawledData := types.CrawledData{
-		URL:   baseURL,
-		Links: linkInfos,
+    var pageCategory string
+    if *pageType {
+        pageCategory, _, err = determinePageCategory(baseURL)
+        if err != nil {
+            log.Printf("Error determining page category for %s: %v", baseURL, err)
+        }
+    } else {
+        pageCategory = "unknown"
+    }
+    crawledData := types.CrawledData{
+		URL:        baseURL,
+		Links:      linkInfos,
+        PageType:   pageCategory,
 	}
 
 	if err := parquetWriter.Write(crawledData); err != nil {
@@ -182,6 +267,7 @@ func main() {
 	query := flag.String("query", "", "Initial URL/domain to crawl")
 	proxyServer := flag.String("proxy", "", "Proxy server URL (e.g., socks5://127.0.0.1:9050)")
 	maxDepth = flag.Int("depth", 3, "Maximum depth for crawling")
+    pageType = flag.Bool("page-type", false, "Test page type during crawling")
 	maxPages := flag.Int("maxpages", 500, "Maximum number of pages to crawl")
 	outputPath := flag.String("output", "", "Output directory for Parquet file")
 

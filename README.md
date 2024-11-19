@@ -40,16 +40,20 @@ The URL Harvester tool supports the following flags:
 
 ```bash
 Usage of url-harvester:
+  -query string
+        Domain / URL to crawl
   -depth int
         Maximum crawl depth (default 1)
   -domain string
         Domain to crawl
   -output string
-        Output directory (default "/tmp")
+        Output directory (default "/tmp" | "~/Desktop/")
   -pages int
         Maximum number of pages to crawl (default 100)
   -proxy string
-        Proxy address (e.g., socks5://
+        Proxy address (e.g., socks5://127.0.0.1:9050)
+  -page-type bool
+        Wheather to test the page type (default false)
 ```
 
 ### Usage example:
